@@ -1,31 +1,95 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Copy, GripVertical, Minus, Plus, RotateCcw, Type } from "lucide-react";
 import { presets } from "@/shared/defaults";
-import type { BackgroundAsset, Layer, Preset } from "@/shared/types";
+import type { BackgroundAsset, CanvasSize, Layer, Preset } from "@/shared/types";
+import { clampPercent, computeSnap, type Guide, type StageBox } from "./snapping";
 
-type StageProps = { background: BackgroundAsset; layers: Layer[]; selectedId: string | null; onSelect: (id: string) => void; onChange: (id: string, patch: Partial<Layer>) => void };
+type StageProps = { background: BackgroundAsset; canvas: CanvasSize; layers: Layer[]; selectedId: string | null; onSelect: (id: string) => void; onChange: (id: string, patch: Partial<Layer>) => void };
 
-export function CanvasStage({ background, layers, selectedId, onSelect, onChange }: StageProps) {
+const SNAP_THRESHOLD = 8;
+
+export function CanvasStage({ background, canvas, layers, selectedId, onSelect, onChange }: StageProps) {
+  const layerRefs = useRef(new Map<string, HTMLDivElement>());
+  const [guides, setGuides] = useState<Guide[]>([]);
+  // 保存当前拖动的监听函数，便于组件卸载时兜底清理
+  const activeDrag = useRef<{ cancel: () => void } | null>(null);
+
+  // 预设/画布比例切换后，旧参考线立即失效，新参考线按新比例重新计算
+  useEffect(() => {
+    setGuides([]);
+  }, [canvas.id, canvas.width, canvas.height]);
+
+  // 卸载时保证不会残留 window 监听与参考线
+  useEffect(() => () => {
+    activeDrag.current?.cancel();
+    activeDrag.current = null;
+  }, []);
+
   const move = (event: React.PointerEvent<HTMLDivElement>, layer: Layer) => {
     if (layer.kind === "text" && event.button !== 0) return;
     const target = event.currentTarget.closest(".canvas-stage") as HTMLDivElement | null;
     if (!target) return;
+    event.preventDefault();
+    const stageRect = target.getBoundingClientRect();
     const startX = event.clientX;
     const startY = event.clientY;
     const start = { x: layer.x, y: layer.y };
-    const handleMove = (moveEvent: PointerEvent) => {
-      const nextX = Math.min(94, Math.max(6, start.x + ((moveEvent.clientX - startX) / target.clientWidth) * 100));
-      const nextY = Math.min(94, Math.max(6, start.y + ((moveEvent.clientY - startY) / target.clientHeight) * 100));
-      onChange(layer.id, { x: nextX, y: nextY });
+
+    // 拖动开始时快照所有元素的包围盒（含缩放、忽略旋转）。
+    // 吸附只改位置，缩放/旋转/层级在整个拖动过程中保持不变，因此快照始终有效。
+    const measureBox = (item: Layer): StageBox => {
+      const node = layerRefs.current.get(item.id);
+      const width = (node?.offsetWidth ?? 0) * item.scale;
+      const height = (node?.offsetHeight ?? 0) * item.scale;
+      return { cx: (item.x / 100) * stageRect.width, cy: (item.y / 100) * stageRect.height, width, height };
     };
-    const finish = () => { window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointerup", finish); };
+    const others = layers.filter((item) => item.id !== layer.id).map(measureBox);
+    const dragBox = measureBox(layer);
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      // 每帧重新读取尺寸：拖动过程中若画布比例变化（预设切换/窗口缩放），坐标映射仍正确
+      const rect = target.getBoundingClientRect();
+      // 未吸附的原始中心位置（像素）
+      const rawX = (start.x / 100) * rect.width + (moveEvent.clientX - startX);
+      const rawY = (start.y / 100) * rect.height + (moveEvent.clientY - startY);
+      const result = computeSnap({
+        rawX,
+        rawY,
+        stageWidth: rect.width,
+        stageHeight: rect.height,
+        others,
+        dragWidth: dragBox.width,
+        dragHeight: dragBox.height,
+        threshold: SNAP_THRESHOLD
+      });
+      // 仅写回位置，缩放、旋转、层级一律不碰
+      onChange(layer.id, {
+        x: clampPercent((result.x / rect.width) * 100),
+        y: clampPercent((result.y / rect.height) * 100)
+      });
+      setGuides(result.guides);
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      activeDrag.current = null;
+      // 松开指针后清除全部辅助线，状态不会残留，也不会进入导出图
+      setGuides([]);
+    };
+    activeDrag.current = { cancel: finish };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
   };
-  return <div className="canvas-stage" style={{ background: background.style }}>
+
+  return <div className="canvas-stage" style={{ background: background.style, aspectRatio: `${canvas.width} / ${canvas.height}`, width: `min(100%, 620px, calc(min(78vh, 760px) * ${canvas.width} / ${canvas.height}))` }}>
     <div className="grain" />
-    {layers.map((layer) => <div key={layer.id} className={`canvas-layer ${layer.kind} ${selectedId === layer.id ? "selected" : ""}`} onPointerDown={(event) => { onSelect(layer.id); move(event, layer); }} style={{ left: `${layer.x}%`, top: `${layer.y}%`, transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scale})`, color: layer.color, fontSize: `${layer.fontSize}px`, opacity: layer.opacity }}>{layer.kind === "text" ? layer.content : layer.content}<span className="layer-handle" /></div>)}
-    <div className="stage-caption"><span>LIVE CANVAS</span><span>1080 × 1080</span></div>
+    {layers.map((layer) => <div key={layer.id} ref={(node) => { if (node) layerRefs.current.set(layer.id, node); else layerRefs.current.delete(layer.id); }} className={`canvas-layer ${layer.kind} ${selectedId === layer.id ? "selected" : ""}`} onPointerDown={(event) => { onSelect(layer.id); move(event, layer); }} style={{ left: `${layer.x}%`, top: `${layer.y}%`, transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scale})`, color: layer.color, fontSize: `${layer.fontSize}px`, opacity: layer.opacity }}>{layer.content}<span className="layer-handle" /></div>)}
+    <div className="snap-guide-layer" aria-hidden="true">
+      {guides.map((guide, index) => <div key={`${guide.axis}-${guide.kind}-${index}`} className={`snap-guide ${guide.axis} ${guide.kind}`} style={guide.axis === "vertical" ? { left: guide.position, top: guide.start, height: Math.max(guide.end - guide.start, 1) } : { top: guide.position, left: guide.start, width: Math.max(guide.end - guide.start, 1) }} />)}
+    </div>
+    <div className="stage-caption"><span>LIVE CANVAS</span><span>{canvas.width} × {canvas.height}</span></div>
   </div>;
 }
 

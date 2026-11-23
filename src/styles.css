@@ -53,7 +53,13 @@ button { border: 0; cursor: pointer; }
 .canvas-wrap { display: grid; place-items: center; min-height: 550px; background: repeating-conic-gradient(#121821 0% 25%, #10151d 0% 50%) 50% / 18px 18px; border: 1px solid var(--line); }
 .canvas-stage { width: min(100%, 620px); aspect-ratio: 1; position: relative; overflow: hidden; box-shadow: 0 24px 55px rgba(0,0,0,.35); }
 .grain { position: absolute; inset: 0; opacity: .16; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E"); pointer-events: none; }
-.canvas-layer { position: absolute; z-index: 2; user-select: none; white-space: nowrap; transform-origin: center; text-shadow: 0 2px 10px rgba(0,0,0,.18); font-weight: 700; letter-spacing: -.045em; padding: 7px 12px; }
+.canvas-layer { position: absolute; z-index: 2; user-select: none; white-space: nowrap; transform-origin: center; text-shadow: 0 2px 10px rgba(0,0,0,.18); font-weight: 700; letter-spacing: -.045em; padding: 7px 12px; touch-action: none; }
+.snap-guide-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+.snap-guide { position: absolute; background: var(--accent); box-shadow: 0 0 6px rgba(217,241,105,.55); opacity: .95; }
+.snap-guide.vertical { width: 1px; }
+.snap-guide.horizontal { height: 1px; }
+.snap-guide.third { background: var(--accent-2); box-shadow: 0 0 6px rgba(134,166,255,.55); }
+.snap-guide.edge { background: #ff8fb0; box-shadow: 0 0 6px rgba(255,143,176,.5); }
 .canvas-layer.sticker { font-family: Georgia, serif; font-weight: 400; text-shadow: 0 4px 12px rgba(0,0,0,.18); }
 .canvas-layer.selected { outline: 1px dashed rgba(225,242,148,.9); outline-offset: 8px; }
 .layer-handle { display: none; position: absolute; width: 7px; height: 7px; right: -5px; bottom: -5px; border: 1px solid #e6f48e; background: #10151b; }
